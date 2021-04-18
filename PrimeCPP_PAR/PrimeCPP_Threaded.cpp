@@ -28,11 +28,13 @@ class prime_sieve
   private:
 
       vector<char> Bits;                                        // Sieve data, where 1==prime, 0==not
+      uint64_t Size;
 
    public:
 
-      prime_sieve(uint64_t n) : Bits(n, 1)                      // Initialize all to true (potential primes)
+      prime_sieve(uint64_t n) : Bits(n >> 1, 1)                 // Initialize all to true (potential primes)
       {
+          Size = n;
       }
 
       ~prime_sieve()
@@ -47,20 +49,20 @@ class prime_sieve
       void runSieve()
       {
           uint64_t factor = 3;
-          uint64_t q = (int) sqrt(Bits.size());
+          uint64_t q = (int) sqrt(Size);
 
           while (factor <= q)
           {
-              for (uint64_t num = factor; num < Bits.size(); num += 2)
+              for (uint64_t num = factor; num < Size; num += 2)
               {
-                  if (Bits[num])
+                  if (Bits[num >> 1])
                   {
                       factor = num;
                       break;
                   }
               }
-              for (uint64_t num = factor * factor; num < Bits.size(); num += factor * 2)
-                  Bits[num] = 0;
+              for (uint64_t num = factor * factor; num < Size; num += factor * 2)
+                  Bits[num >> 1] = 0;
 
               factor += 2;            
           }
@@ -72,8 +74,8 @@ class prime_sieve
 
       size_t countPrimes() const
       {
-          size_t count = (Bits.size() >= 2);                   // Count 2 as prime if within range
-          for (int i = 3; i < Bits.size(); i+=2)
+          size_t count = (Size >= 2);                   // Count 2 as prime if within range
+          for (int i = 1; i < Bits.size(); ++i)
               if (Bits[i])
                   count++;
           return count;
@@ -86,7 +88,7 @@ class prime_sieve
       bool isPrime(uint64_t n) const
       {
           if (n & 1)
-              return Bits[n];
+              return Bits[n >> 1];
           else
               return false;
       }
@@ -111,9 +113,9 @@ class prime_sieve
                 {  1'000'000'000LLU, 50847534  },
                 { 10'000'000'000LLU, 455052511 },
           };
-          if (resultsDictionary.end() == resultsDictionary.find(Bits.size()))
+          if (resultsDictionary.end() == resultsDictionary.find(Size))
               return false;
-          return resultsDictionary.find(Bits.size())->second == countPrimes();
+          return resultsDictionary.find(Size)->second == countPrimes();
       }
 
       // printResults
@@ -125,13 +127,13 @@ class prime_sieve
           if (showResults)
               cout << "2, ";
 
-          size_t count = (Bits.size() >= 2);                   // Count 2 as prime if in range
-          for (uint64_t num = 3; num <= Bits.size(); num+=2)
+          size_t count = (Size >= 2);                   // Count 2 as prime if in range
+          for (uint64_t num = 1; num <= Bits.size(); ++num)
           {
               if (Bits[num])
               {
                   if (showResults)
-                      cout << num << ", ";
+                      cout << (2 * num + 1) << ", ";
                   count++;
               }
           }
@@ -143,7 +145,7 @@ class prime_sieve
                << "Threads: " << threads << ", "
                << "Time: "    << duration << ", " 
                << "Average: " << duration/passes << ", "
-               << "Limit: "   << Bits.size() << ", "
+               << "Limit: "   << Size << ", "
                << "Counts: "  << count << "/" << countPrimes() << ", "
                << "Valid : "  << (validateResults() ? "Pass" : "FAIL!") 
                << "\n";
