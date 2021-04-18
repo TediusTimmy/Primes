@@ -27,11 +27,11 @@ class prime_sieve
 {
   private:
 
-      vector<bool> Bits;                                        // Sieve data, where 1==prime, 0==not
+      vector<char> Bits;                                        // Sieve data, where 1==prime, 0==not
 
    public:
 
-      prime_sieve(uint64_t n) : Bits(n, true)                  // Initialize all to true (potential primes)
+      prime_sieve(uint64_t n) : Bits(n, 1)                      // Initialize all to true (potential primes)
       {
       }
 
@@ -60,7 +60,7 @@ class prime_sieve
                   }
               }
               for (uint64_t num = factor * factor; num < Bits.size(); num += factor * 2)
-                  Bits[num] = false;
+                  Bits[num] = 0;
 
               factor += 2;            
           }
