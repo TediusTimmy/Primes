@@ -28,13 +28,17 @@ class prime_sieve
   private:
 
       vector<char> Bits;                                        // Sieve data, where 1==prime, 0==not
+      /* The strange thing about this sieve is that we are only going to store odd numbers.                  */
+      /* Index i in the sieve corresponds to the number (2 * i + 1).                                         */
+      /* As such, we'll need to store the actual size for every place that Dave was using the vector's size. */
       uint64_t Size;
+      uint64_t Threads;
 
    public:
 
-      prime_sieve(uint64_t n) : Bits(n >> 1, 1)                 // Initialize all to true (potential primes)
+      prime_sieve(uint64_t n, uint64_t t) : Bits(n >> 1, 1), Size(n), Threads(t) // Initialize all to potential primes
       {
-          Size = n;
+          Bits[0] = 0; /* Except one: one is not prime. This may be a bug in Dave's code. */
       }
 
       ~prime_sieve()
@@ -48,23 +52,84 @@ class prime_sieve
 
       void runSieve()
       {
-          uint64_t factor = 3;
-          uint64_t q = (int) sqrt(Size);
+          vector<thread> threadPool;
+          for (uint64_t i = 0; i < Threads; i++)
+          {
+              threadPool.push_back(thread([=]
+              {
+                  runSieve(static_cast<int64_t>(i));
+              }));
+          }
+          for (auto &th : threadPool) 
+              th.join();
+      }
 
+/*
+      Lock-free threaded sieve implementation.
+
+      One way we achieve lock-free-ness is that we don't actually compute the next prime for flagging its composites.
+      We just enumerate over numbers that are more likely to be prime, and hope we don't waste too much time computing the multiples of composites.
+
+      Consider all numbers arranged in six columns, like so:
+         1  2  3  4  5  6
+         7  8  9 10 11 12
+        13 14 15 16 17 18
+        19 20 21 22 23 24
+        25 26 27 28 29 30
+      By inspection, we can see that all numbers in columns 2, 3, 4, and 6 will always be composite (except for the numbers 2 and 3).
+      So there exists an n for all prime numbers greater than three such that the prime number is 6n-1 or 6n+1.
+
+      Each thread gets a different index, and then iterates over 6n-1 and 6n+1 for that index, and then it increments its index by the number of threads.
+      The only special thread is the one who gets index 0: it iterates over the multiples of 3.
+
+      The next stage of achieving lock-free-ness, and this method's fatal flaw, is selecting a unit of memory that is large enough
+      so that we don't do a read-modify-write, but rather just a write.
+      We only read from memory in a manner that it doesn't matter if the read is wrong
+      (while it is wasteful to mark the composites of a composite as composite, it doesn't change the correctness of the algorithm),
+      and we only write to memory in a manner that mis-ordered writes are still consistent
+      (it doesn't matter if the three thread or five thread marks 45 as composite, what matters is that doing so doesn't unmark 40 or 42).
+      The trick is to use a unit large enough that writes are atomic: my experience with bytes (on my machine) seem to work, but check your processor docs.
+
+      The real issue is memory:
+      As this uses eight times as much memory as a vector<bool>, it has less locality, and is far less performant because of it.
+      And, if your processor only guarantees consistency on 4-byte or 8-byte writes, then your performance will suffer accordingly,
+      as this algorithm will not be correct as programmed.
+*/
+      void runSieve(int64_t index)
+      {
+          int64_t factor = 6 * index - 1;
+          int64_t q = (int) sqrt(Size);
           while (factor <= q)
           {
-              for (uint64_t num = factor; num < Size; num += 2)
+              if (0 == index)
               {
-                  if (Bits[num >> 1])
+                  for (uint64_t num = 9; num < Size; num += 6)
                   {
-                      factor = num;
-                      break;
+                      Bits[num >> 1] = 0;
                   }
+                  index += Threads;
+                  factor = 6 * index - 1;
               }
-              for (uint64_t num = factor * factor; num < Size; num += factor * 2)
-                  Bits[num >> 1] = 0;
-
-              factor += 2;            
+              else
+              {
+                  if (1 == Bits[factor >> 1])
+                  {
+                      for (uint64_t num = factor * factor; num < Size; num += (2 * factor))
+                      {
+                          Bits[num >> 1] = 0;
+                      }
+                  }
+                  factor += 2;
+                  if (1 == Bits[factor >> 1])
+                  {
+                      for (uint64_t num = factor * factor; num < Size; num += (2 * factor))
+                      {
+                          Bits[num >> 1] = 0;
+                      }
+                  }
+                  index += Threads;
+                  factor = 6 * index - 1;
+              }
           }
       }
 
@@ -75,7 +140,7 @@ class prime_sieve
       size_t countPrimes() const
       {
           size_t count = (Size >= 2);                   // Count 2 as prime if within range
-          for (int i = 1; i < Bits.size(); ++i)
+          for (size_t i = 1; i < Bits.size(); ++i)
               if (Bits[i])
                   count++;
           return count;
@@ -100,7 +165,7 @@ class prime_sieve
 
       bool validateResults() const
       {
-          const std::map<const uint64_t, const int> resultsDictionary =
+          const std::map<const uint64_t, const size_t> resultsDictionary =
           {
                 {             10LLU, 4         },               // Historical data for validating our results - the number of primes
                 {            100LLU, 25        },               // to be found under some limit, such as 168 primes under 1000
@@ -225,7 +290,7 @@ int main(int argc, char **argv)
 
     auto cSeconds     = (cSecondsRequested ? cSecondsRequested : 5);
     auto cThreads     = (cThreadsRequested ? cThreadsRequested : thread::hardware_concurrency());
-    auto llUpperLimit = (ullLimitRequested ? ullLimitRequested : DEFAULT_UPPER_LIMIT);
+    unsigned long long llUpperLimit = (ullLimitRequested ? ullLimitRequested : DEFAULT_UPPER_LIMIT);
 
     if (!bQuiet)
     {
@@ -239,33 +304,19 @@ int main(int argc, char **argv)
     }
     auto tStart       = steady_clock::now();
 
-    vector<thread> threadPool;
-            
-    // We create N threads and give them each the job of runing the 'runSieve' method on a sieve
-    // that we create on the heap, rather than the stack, due to their possible enormity.  By using
-    // a unique_ptr it will automatically free resources as soon as its torn down.
+    // We create a sieve that uses N threads.
 
-    for (unsigned int i = 0; i < (bOneshot ? 1 :  cThreads); i++)
+    do
     {
-        threadPool.push_back(thread([=]
-        {
-            while (duration_cast<seconds>(steady_clock::now() - tStart).count() < cSeconds)
-            {
-                std::unique_ptr<prime_sieve>(new prime_sieve(llUpperLimit))->runSieve();
-                cPasses++;
-            }
-        }));
+        std::unique_ptr<prime_sieve>(new prime_sieve(llUpperLimit, bOneshot ? 1 : cThreads))->runSieve();
+        cPasses++;
     }
-
-    // Now we wait for all of the threads to finish before we repeat
-
-    for (auto &th : threadPool) 
-        th.join();
+    while (!bOneshot && duration_cast<seconds>(steady_clock::now() - tStart).count() < cSeconds);
 
     auto tEnd = steady_clock::now() - tStart;
     auto duration = duration_cast<microseconds>(tEnd).count()/1000000.0;
     
-    prime_sieve checkSieve(llUpperLimit);
+    prime_sieve checkSieve(llUpperLimit, bOneshot ? 1 : cThreads);
     checkSieve.runSieve();
     auto result = checkSieve.validateResults() ? checkSieve.countPrimes() : 0;
   
